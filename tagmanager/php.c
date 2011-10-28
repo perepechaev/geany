@@ -1,4 +1,6 @@
 /*
+*   $Id: php.c 5856 2011-06-17 22:52:43Z colombanw $
+*
 *   Copyright (c) 2000, Jesus Castagnetto <jmcastagnetto@zkey.com>
 *
 *   This source code is released for free distribution under the terms of the
@@ -14,6 +16,8 @@
 /*
 *   INCLUDE FILES
 */
+
+
 #include "general.h"  /* must always come first */
 
 #include <string.h>
@@ -21,6 +25,8 @@
 #include "parse.h"
 #include "read.h"
 #include "vstring.h"
+#include "keyword.h"
+#include "get.h"
 
 /*
 *   DATA DEFINITIONS
@@ -29,14 +35,12 @@ typedef enum {
 	K_CLASS, K_DEFINE, K_FUNCTION, K_VARIABLE
 } phpKind;
 
-#if 0
 static kindOption PhpKinds [] = {
 	{ TRUE, 'c', "class",    "classes" },
 	{ TRUE, 'd', "define",   "constant definitions" },
 	{ TRUE, 'f', "function", "functions" },
 	{ TRUE, 'v', "variable", "variables" }
 };
-#endif
 
 /*
 *   FUNCTION DEFINITIONS
@@ -65,10 +69,16 @@ static kindOption PhpKinds [] = {
 #define ALPHA "[:alpha:]"
 #define ALNUM "[:alnum:]"
 
+langType lang;
+
 static void function_cb(const char *line, const regexMatch *matches, unsigned int count);
+static void parsePhpClass(const char *line, const regexMatch *matches, unsigned int count);
+static void skipToMatch (const char *const pair);
 
 static void installPHPRegex (const langType language)
 {
+	lang = language;
+	
 	addTagRegex(language, "^[ \t]*((final|abstract)[ \t]+)*class[ \t]+([" ALPHA "_][" ALNUM "_]*)",
 		"\\3", "c,class,classes", NULL);
 	addTagRegex(language, "^[ \t]*interface[ \t]+([" ALPHA "_][" ALNUM "_]*)",
@@ -77,13 +87,19 @@ static void installPHPRegex (const langType language)
 		"\\1", "m,macro,macros", NULL);
 	addTagRegex(language, "^[ \t]*const[ \t]*([" ALPHA "_][" ALNUM "_]*)[ \t]*[=;]",
 		"\\1", "m,macro,macros", NULL);
+	/* Note: Using [] to match words is wrong, but using () doesn't seem to match 'function' on its own */
 	addCallbackRegex(language,
-		"^[ \t]*((public|protected|private|static|final)[ \t]+)*function[ \t]+&?[ \t]*([" ALPHA "_][" ALNUM "_]*)[[:space:]]*(\\(.*\\))",
+		"^[ \t]*[(public|protected|private|static|final)[ \t]*]*[ \t]*function[ \t]+&?[ \t]*([" ALPHA "_][" ALNUM "_]*)[[:space:]]*(\\(.*\\))",
 		NULL, function_cb);
 	addTagRegex(language, "^[ \t]*(\\$|::\\$|\\$this->)([" ALPHA "_][" ALNUM "_]*)[ \t]*=",
 		"\\2", "v,variable,variables", NULL);
 	addTagRegex(language, "^[ \t]*((var|public|protected|private|static)[ \t]+)+\\$([" ALPHA "_][" ALNUM "_]*)[ \t]*[=;]",
 		"\\3", "v,variable,variables", NULL);
+
+	/* My function regex class */
+	/* addCallbackRegex(language, "^[ \t]*((final|abstract)[ \t]+)class[ \t]+([" ALPHA "_][" ALNUM "_]*)",*/
+	addCallbackRegex(language, "[ \t]+class[ \t]+([" ALPHA "_][" ALNUM "_]*)",
+		NULL, parsePhpClass);
 
 	/* function regex is covered by PHP regex */
 	addTagRegex (language, "(^|[ \t])([A-Za-z0-9_]+)[ \t]*[=:][ \t]*function[ \t]*\\(",
@@ -94,6 +110,28 @@ static void installPHPRegex (const langType language)
 		"\\3", "j,jsfunction,javascript functions", NULL);
 }
 
+void printTagEntry(const tagEntryInfo *tag)
+{
+	fprintf(stderr, "Tag: %s (%s) [ impl: %s, scope: %s, type: %s\n", tag->name,
+	tag->kindName, tag->extensionFields.implementation, tag->extensionFields.scope[1],
+	tag->extensionFields.varType);
+}
+
+static void parsePhpClass(const char *line, const regexMatch *matches, unsigned int count)
+{
+	char * ln, *className;
+	
+	className = xMalloc(matches[count - 1].length + 1, char);
+	strncpy(className, line + matches[count - 1].start, matches[count - 1].length);
+	*(className+matches[count - 1].length) = '\x0';
+	printf("Name: %s\n", className);
+	
+	
+	skipToMatch("{}");
+	
+	
+	eFree(className);
+}
 
 static void function_cb(const char *line, const regexMatch *matches, unsigned int count)
 {
@@ -124,10 +162,83 @@ static void function_cb(const char *line, const regexMatch *matches, unsigned in
 		e.kindName = kindName;
 		e.extensionFields.arglist = arglist;
 		makeTagEntry (&e);
+		// printTagEntry(&e);
 
 		eFree(name);
 		eFree(arglist);
 	}
+}
+
+static void handlePhpLine(vString *line)
+{
+	char *class, head[16];
+	int i, ct = 0;
+	int decl[3] = {6, 15, 12};
+	
+	strncpy(head, vStringValue(line), 15);
+	for (i = 0; i < 15; i++)
+	{
+		head[i] = tolower(head[i]);
+	}
+	
+	if (strncmp(head, "class ", (size_t) decl[0]) == 0 && (ct = 1) ||
+		strncmp(head, "abstract class ", (size_t) decl[1]) == 0 && (ct = 2) ||
+		strncmp(head, "final class ", (size_t) decl[2]) == 0 && (ct = 3))
+	{
+		for (i = decl[ct - 1]; i < vStringSize(line); i++)
+		{
+			if (isspace(vStringChar(line, i)))
+			{
+				break;
+			}
+			fputc(vStringChar(line, i), stdout); 
+		}
+		fputc('\n', stdout);
+	}	
+	else
+	{
+		//fputs( "NONE CLASS: ", stdout);
+	}
+}
+
+static void findPHPTags (void)
+{
+    vString *name = vStringNew ();
+    vString *line = vStringNew ();
+    
+    int c = '\0';
+
+    while ((c = cppGetc ()) != EOF)
+    {
+		vStringPut(line, c);
+		
+		if (c == NEWLINE)
+		{
+			handlePhpLine(line);
+			vStringClear(line);
+		}
+
+		/*
+        if (strncmp ((const char*) line, "class ", (size_t) 6) == 0  &&
+            isspace ((int) line [6]))
+        {
+            const unsigned char *cp = line + 6;
+            while (isspace ((int) *cp))
+                ++cp;
+            while (isalnum ((int) *cp)  ||  *cp == '_')
+            {
+                vStringPut (name, (int) *cp);
+                ++cp;
+            }
+            printf("NAME: %s\n", name);
+            /*
+            vStringTerminate (name);
+            makeSimpleTag (name, SwineKinds, K_DEFINE);
+            vStringClear (name);
+        }
+		*/
+    }
+    vStringDelete (name);
 }
 
 /* Create parser definition structure */
@@ -135,147 +246,76 @@ extern parserDefinition* PhpParser (void)
 {
 	static const char *const extensions [] = { "php", "php3", "phtml", NULL };
 	parserDefinition* def = parserNew ("PHP");
-	def->extensions = extensions;
-	def->initialize = installPHPRegex;
-	def->regex      = TRUE;
-	return def;
+	
+    def->kinds      = PhpKinds;
+    def->kindCount  = KIND_COUNT (PhpKinds);
+    def->extensions = extensions;
+    def->parser     = findPHPTags;
+    
+    return def;
 }
 
-#if 0
-
-static boolean isLetter(const int c)
+/*  Skips to the next brace in column 1. This is intended for cases where
+ *  preprocessor constructs result in unbalanced braces.
+ */
+static void skipToFormattedBraceMatch (void)
 {
-	return (boolean)(isalpha(c) || (c >= 127  &&  c <= 255));
-}
+	int c, next;
 
-static boolean isVarChar1(const int c)
-{
-	return (boolean)(isLetter (c)  ||  c == '_');
-}
-
-static boolean isVarChar(const int c)
-{
-	return (boolean)(isVarChar1 (c) || isdigit (c));
-}
-
-static void findPhpTags (void)
-{
-	vString *name = vStringNew ();
-	const unsigned char *line;
-
-	while ((line = fileReadLine ()) != NULL)
+	c = cppGetc ();
+	next = cppGetc ();
+	while (c != EOF  &&  (c != '\n'  ||  next != '}'))
 	{
-		const unsigned char *cp = line;
-		const char* f;
+		c = next;
+		next = cppGetc ();
+	}
+}
 
-		while (isspace (*cp))
-			cp++;
-
-		if (*(const char*)cp == '$'  &&  isVarChar1 (*(const char*)(cp+1)))
+/*  Skip to the matching character indicated by the pair string. If skipping
+ *  to a matching brace and any brace is found within a different level of a
+ *  #if conditional statement while brace formatting is in effect, we skip to
+ *  the brace matched by its formatting. It is assumed that we have already
+ *  read the character which starts the group (i.e. the first character of
+ *  "pair").
+ */
+static void skipToMatch (const char *const pair)
+{
+	const boolean braceMatching = (boolean) (strcmp ("{}", pair) == 0);
+	const boolean braceFormatting = (boolean) (isBraceFormat () && braceMatching);
+	const unsigned int initialLevel = getDirectiveNestLevel ();
+	const int begin = pair [0], end = pair [1];
+	const unsigned long inputLineNumber = getInputLineNumber ();
+	int matchLevel = 1;
+	int c = '\0';
+	while (matchLevel > 0  &&  (c = cppGetc ()) != EOF)
+	{
+		fputc(c, stdout);
+		if (c == begin)
 		{
-			cp += 1;
-			vStringClear (name);
-			while (isVarChar ((int) *cp))
+			++matchLevel;
+			if (braceFormatting  &&  getDirectiveNestLevel () != initialLevel)
 			{
-				vStringPut (name, (int) *cp);
-				++cp;
-			}
-			while (isspace ((int) *cp))
-				++cp;
-			if (*(const char*) cp == '=')
-			{
-				vStringTerminate (name);
-				makeSimpleTag (name, PhpKinds, K_VARIABLE);
-				vStringClear (name);
+				skipToFormattedBraceMatch ();
+				break;
 			}
 		}
-		else if ((f = strstr ((const char*) cp, "function")) != NULL &&
-			(f == (const char*) cp || isspace ((int) f [-1])) &&
-			isspace ((int) f [8]))
+		else if (c == end)
 		{
-			cp = ((const unsigned char *) f) + 8;
-
-			while (isspace ((int) *cp))
-				++cp;
-
-			if (*cp == '&')	/* skip reference character and following whitespace */
+			--matchLevel;
+			if (braceFormatting  &&  getDirectiveNestLevel () != initialLevel)
 			{
-				cp++;
-
-				while (isspace ((int) *cp))
-					++cp;
+				skipToFormattedBraceMatch ();
+				break;
 			}
-
-			vStringClear (name);
-			while (isalnum ((int) *cp)  ||  *cp == '_')
-			{
-				vStringPut (name, (int) *cp);
-				++cp;
-			}
-			vStringTerminate (name);
-			makeSimpleTag (name, PhpKinds, K_FUNCTION);
-			vStringClear (name);
-		}
-		else if (strncmp ((const char*) cp, "class", (size_t) 5) == 0 &&
-				 isspace ((int) cp [5]))
-		{
-			cp += 5;
-
-			while (isspace ((int) *cp))
-				++cp;
-			vStringClear (name);
-			while (isalnum ((int) *cp)  ||  *cp == '_')
-			{
-				vStringPut (name, (int) *cp);
-				++cp;
-			}
-			vStringTerminate (name);
-			makeSimpleTag (name, PhpKinds, K_CLASS);
-			vStringClear (name);
-		}
-		else if (strncmp ((const char*) cp, "define", (size_t) 6) == 0 &&
-				 ! isalnum ((int) cp [6]))
-		{
-			cp += 6;
-
-			while (isspace ((int) *cp))
-				++cp;
-			if (*cp != '(')
-				continue;
-			++cp;
-
-			while (isspace ((int) *cp))
-				++cp;
-			if ((*cp == '\'') || (*cp == '"'))
-				++cp;
-			else if (! ((*cp == '_')  || isalnum ((int) *cp)))
-				continue;
-
-			vStringClear (name);
-			while (isalnum ((int) *cp)  ||  *cp == '_')
-			{
-				vStringPut (name, (int) *cp);
-				++cp;
-			}
-			vStringTerminate (name);
-			makeSimpleTag (name, PhpKinds, K_DEFINE);
-			vStringClear (name);
 		}
 	}
-	vStringDelete (name);
+	fputc('\n', stdout);
+	
+	printf("---- Line number: %d\n", inputLineNumber);
+	if (c == EOF)
+	{
+		printf("\test\n");
+	}
 }
-
-extern parserDefinition* PhpParser (void)
-{
-	static const char *const extensions [] = { "php", "php3", "phtml", NULL };
-	parserDefinition* def = parserNew ("PHP");
-	def->kinds      = PhpKinds;
-	def->kindCount  = KIND_COUNT (PhpKinds);
-	def->extensions = extensions;
-	def->parser     = findPhpTags;
-	return def;
-}
-
-#endif
 
 /* vi:set tabstop=4 shiftwidth=4: */
