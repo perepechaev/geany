@@ -45,6 +45,7 @@ Makefile.in
 /libtool
 /localwin32.mk
 /.lock-wscript
+/.lock-wafbuild
 /ltmain.sh
 /m4/
 /make_deb.sh
@@ -65,6 +66,7 @@ Makefile.in
 /po/*.gmo
 /po/*.header
 /po/.intltool-merge-cache
+/po/.intlcache
 /po/LINGUAS
 /po/Makefile.in.in
 /po/Makevars
