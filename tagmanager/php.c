@@ -35,6 +35,14 @@ typedef enum {
 	K_CLASS, K_DEFINE, K_FUNCTION, K_VARIABLE
 } phpKind;
 
+typedef enum{
+	AM_NULL, AM_PUBLIC, AM_PRIVATE, AM_PROTECTD
+} phpAccessMethod;
+
+typedef enum{
+	TM_NULL, TM_FINAL, TM_ABSTRACT, TM_STATIC
+} phpTypeMethod;
+
 static kindOption PhpKinds [] = {
 	{ TRUE, 'c', "class",    "classes" },
 	{ TRUE, 'd', "define",   "constant definitions" },
@@ -70,6 +78,12 @@ static kindOption PhpKinds [] = {
 #define ALNUM "[:alnum:]"
 
 langType lang;
+
+typedef struct sStatement
+{
+	char*	scopeName;
+	int		nested;
+} sStatement;
 
 static void function_cb(const char *line, const regexMatch *matches, unsigned int count);
 static void parsePhpClass(const char *line, const regexMatch *matches, unsigned int count);
@@ -169,10 +183,10 @@ static void function_cb(const char *line, const regexMatch *matches, unsigned in
 	}
 }
 
-static void handlePhpLine(vString *line)
+static void handlePhpLine(vString *line, sStatement *st)
 {
-	char *class, head[16];
-	int i, ct = 0;
+	unsigned char head[16];
+	int i, s, ct = 0;
 	int decl[3] = {6, 15, 12};
 	
 	strncpy(head, vStringValue(line), 15);
@@ -181,64 +195,152 @@ static void handlePhpLine(vString *line)
 		head[i] = tolower(head[i]);
 	}
 	
+	// Parse class
 	if (strncmp(head, "class ", (size_t) decl[0]) == 0 && (ct = 1) ||
 		strncmp(head, "abstract class ", (size_t) decl[1]) == 0 && (ct = 2) ||
 		strncmp(head, "final class ", (size_t) decl[2]) == 0 && (ct = 3))
 	{
-		for (i = decl[ct - 1]; i < vStringSize(line); i++)
+		s = decl[ct - 1];
+		
+		for (i = s; i < vStringSize(line); i++)
 		{
-			if (isspace(vStringChar(line, i)))
+			char ch = vStringChar(line, i);
+
+			if (isspace((int) ch) || !(isalnum((int) ch) || (int) ch == '_'))
 			{
 				break;
 			}
-			fputc(vStringChar(line, i), stdout); 
 		}
-		fputc('\n', stdout);
+		st->scopeName = xMalloc(i - s, char);
+		strncpy(st->scopeName, vStringValue(line) + s, i - s);
+		*(st->scopeName + i - s) = '\0';
+		
+		// DEBUG
+		printf("class %s\n", st->scopeName);
+		return;
 	}	
-	else
+	
+	unsigned char* cp = vStringValue(line);
+	while ( isspace( (int) *cp ) )
+		cp++;
+		
+	// Parse methods
+	phpAccessMethod am = AM_NULL;
+	phpTypeMethod tm = TM_NULL;
+	int isStatic = 0;
+	
+	
+	char *keywords[] = {"public", "private", "protected", "abstact", "static", "final"};
+	
+	for (i = 0; i < 6; i++)
 	{
-		//fputs( "NONE CLASS: ", stdout);
+		if (strncmp(cp, keywords[i], strlen(keywords[i])) == 0)
+		{
+			switch (i)
+			{
+				case 0: am = AM_PUBLIC; break;
+				case 1: am = AM_PRIVATE; break;
+				case 2: am = AM_PROTECTD; break;
+				case 3: tm = TM_ABSTRACT; break;
+				case 4: isStatic = 1; break;
+				case 5: tm = TM_FINAL; break;
+			}
+			
+			cp += strlen(keywords[i]);
+			while ( isspace( (int) *cp ) )
+				cp++;
+			i = -1;
+		}
+	}
+	
+	char *name = 0;
+	if ( strncmp( cp, "function ", 9 ) == 0 )
+	{
+		
+		cp += 9;
+		i = 0;
+		
+		while ( (int) *cp != '\0' )
+		{
+			if (isspace((int) *cp) || !(isalnum((int) *cp) || (int) *cp == '_'))
+			{
+				break;
+			}
+			cp++; i++;
+		}
+		
+		if ( i != 0)
+		{
+			name = xMalloc(i+1, char);
+			strncpy(name, cp - i, i);
+			name[i] = '\0';
+		}
+	}
+	
+	if (name)
+	{
+		putc('\t', stdout);
+		
+		if (tm == TM_ABSTRACT)
+			printf("abstract ");
+		else if (tm == TM_FINAL)
+			printf("final ");
+		
+		if (isStatic)
+			printf("static ");
+		
+		if (am == AM_PUBLIC)
+			printf("public ");
+		else if (am == AM_PROTECTD)
+			printf("protected  ");
+		else if (am == AM_PRIVATE)
+			printf("private ");
+
+		printf("function %s::%s()\n", st->scopeName, name);
+		eFree(name);
+	}
+	
+	if ( !st->scopeName )
+	{
+		return;
 	}
 }
 
 static void findPHPTags (void)
 {
-    vString *name = vStringNew ();
     vString *line = vStringNew ();
+	sStatement st;
+	st.nested = 0;
+	st.scopeName = '\0';
     
     int c = '\0';
+    int ln = 0;
 
     while ((c = cppGetc ()) != EOF)
     {
 		vStringPut(line, c);
 		
-		if (c == NEWLINE)
+		if (c == '{'){
+			st.nested++;
+		}
+		else if (c == '}'){
+			st.nested--;
+			if (st.nested == 0){
+				if (st.scopeName){
+					st.scopeName = '\0';
+					eFree(st.scopeName);
+				}
+			}
+		}
+		else if (c == NEWLINE)
 		{
-			handlePhpLine(line);
+			ln++;
+			handlePhpLine(line, &st);
 			vStringClear(line);
 		}
-
-		/*
-        if (strncmp ((const char*) line, "class ", (size_t) 6) == 0  &&
-            isspace ((int) line [6]))
-        {
-            const unsigned char *cp = line + 6;
-            while (isspace ((int) *cp))
-                ++cp;
-            while (isalnum ((int) *cp)  ||  *cp == '_')
-            {
-                vStringPut (name, (int) *cp);
-                ++cp;
-            }
-            printf("NAME: %s\n", name);
-            /*
-            vStringTerminate (name);
-            makeSimpleTag (name, SwineKinds, K_DEFINE);
-            vStringClear (name);
-        }
-		*/
     }
-    vStringDelete (name);
+    
+    vStringDelete (line);
 }
 
 /* Create parser definition structure */
