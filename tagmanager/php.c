@@ -43,6 +43,10 @@ typedef enum{
 	TM_NULL, TM_FINAL, TM_ABSTRACT, TM_STATIC
 } phpTypeMethod;
 
+typedef enum{
+	SC_ROOT, SC_CLASS, SC_FUNCTION
+} phpScope;
+
 static kindOption PhpKinds [] = {
 	{ TRUE, 'c', "class",    "classes" },
 	{ TRUE, 'd', "define",   "constant definitions" },
@@ -83,6 +87,8 @@ typedef struct sStatement
 {
 	char*	scopeName;
 	int		nested;
+	phpScope type;
+	struct sStatement *parent;
 } sStatement;
 
 static void function_cb(const char *line, const regexMatch *matches, unsigned int count);
@@ -183,11 +189,13 @@ static void function_cb(const char *line, const regexMatch *matches, unsigned in
 	}
 }
 
-static void handlePhpLine(vString *line, sStatement *st)
+static void handlePhpLine(vString *line, sStatement **statement)
 {
 	unsigned char head[16];
 	int i, s, ct = 0;
 	int decl[3] = {6, 15, 12};
+	sStatement *st = *statement;
+	tagEntryInfo tag;
 	
 	strncpy(head, vStringValue(line), 15);
 	for (i = 0; i < 15; i++)
@@ -202,6 +210,7 @@ static void handlePhpLine(vString *line, sStatement *st)
 	{
 		s = decl[ct - 1];
 		
+		// find class name
 		for (i = s; i < vStringSize(line); i++)
 		{
 			char ch = vStringChar(line, i);
@@ -211,12 +220,34 @@ static void handlePhpLine(vString *line, sStatement *st)
 				break;
 			}
 		}
+		
+		// Store statement
+		sStatement *parent = st;
+		st = xMalloc(1, sStatement);
+		if ( i - s == 0 )
+		{
+			return;
+		}
 		st->scopeName = xMalloc(i - s, char);
 		strncpy(st->scopeName, vStringValue(line) + s, i - s);
 		*(st->scopeName + i - s) = '\0';
+		st->parent = parent;
+		st->type = SC_CLASS;
+		st->nested = 0;
+		*statement = st;
+		
+		// Create tag
+		initTagEntry(&tag, st->scopeName);
+		tag.kind = 'c';
+		tag.kindName = "class";
+		makeTagEntry (&tag);
 		
 		// DEBUG
-		printf("class %s\n", st->scopeName);
+		
+		// printf("class %s (parent:%x)\n", st->scopeName, st->parent);
+		// printTagEntry(&tag);
+		// printf("Line number: %d\n", tag.lineNumber);
+		
 		return;
 	}	
 	
@@ -260,6 +291,9 @@ static void handlePhpLine(vString *line, sStatement *st)
 		cp += 9;
 		i = 0;
 		
+		while ( isspace( (int) *cp ) )
+			cp++;
+			
 		while ( (int) *cp != '\0' )
 		{
 			if (isspace((int) *cp) || !(isalnum((int) *cp) || (int) *cp == '_'))
@@ -268,6 +302,7 @@ static void handlePhpLine(vString *line, sStatement *st)
 			}
 			cp++; i++;
 		}
+		
 		
 		if ( i != 0)
 		{
@@ -279,24 +314,6 @@ static void handlePhpLine(vString *line, sStatement *st)
 	
 	if (name)
 	{
-		putc('\t', stdout);
-		
-		if (tm == TM_ABSTRACT)
-			printf("abstract ");
-		else if (tm == TM_FINAL)
-			printf("final ");
-		
-		if (isStatic)
-			printf("static ");
-		
-		if (am == AM_PUBLIC)
-			printf("public ");
-		else if (am == AM_PROTECTD)
-			printf("protected  ");
-		else if (am == AM_PRIVATE)
-			printf("private ");
-
-		printf("function %s::%s()\n", st->scopeName, name);
 		eFree(name);
 	}
 	
@@ -309,9 +326,10 @@ static void handlePhpLine(vString *line, sStatement *st)
 static void findPHPTags (void)
 {
     vString *line = vStringNew ();
-	sStatement st;
-	st.nested = 0;
-	st.scopeName = '\0';
+	sStatement *st = xMalloc(1, sStatement);
+
+	st->scopeName = '\0';
+	st->nested = 0;
     
     int c = '\0';
     int ln = 0;
@@ -320,15 +338,26 @@ static void findPHPTags (void)
     {
 		vStringPut(line, c);
 		
-		if (c == '{'){
-			st.nested++;
+		if (c == '{')
+		{
+			st->nested++;
 		}
-		else if (c == '}'){
-			st.nested--;
-			if (st.nested == 0){
-				if (st.scopeName){
-					st.scopeName = '\0';
-					eFree(st.scopeName);
+		else if (c == '}')
+		{
+			st->nested--;
+			if (st->nested == 0)
+			{
+				sStatement *stp = st;
+				
+				if (st->scopeName)
+				{
+					eFree(st->scopeName);
+				}
+				
+				if (st->type == SC_CLASS || st->type == SC_FUNCTION)
+				{
+					st = st->parent;
+					eFree(stp);
 				}
 			}
 		}
@@ -340,6 +369,7 @@ static void findPHPTags (void)
 		}
     }
     
+	eFree(st);
     vStringDelete (line);
 }
 
