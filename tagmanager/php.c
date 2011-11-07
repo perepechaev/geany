@@ -32,7 +32,7 @@
 *   DATA DEFINITIONS
 */
 typedef enum {
-	K_CLASS, K_DEFINE, K_FUNCTION, K_VARIABLE
+	K_CLASS, K_METHOD, K_DEFINE, K_FUNCTION, K_VARIABLE
 } phpKind;
 
 typedef enum{
@@ -49,6 +49,7 @@ typedef enum{
 
 static kindOption PhpKinds [] = {
 	{ TRUE, 'c', "class",    "classes" },
+	{ TRUE, 'm', "method",   "methods" },
 	{ TRUE, 'd', "define",   "constant definitions" },
 	{ TRUE, 'f', "function", "functions" },
 	{ TRUE, 'v', "variable", "variables" }
@@ -91,102 +92,11 @@ typedef struct sStatement
 	struct sStatement *parent;
 } sStatement;
 
-static void function_cb(const char *line, const regexMatch *matches, unsigned int count);
-static void parsePhpClass(const char *line, const regexMatch *matches, unsigned int count);
-static void skipToMatch (const char *const pair);
-
-static void installPHPRegex (const langType language)
-{
-	lang = language;
-	
-	addTagRegex(language, "^[ \t]*((final|abstract)[ \t]+)*class[ \t]+([" ALPHA "_][" ALNUM "_]*)",
-		"\\3", "c,class,classes", NULL);
-	addTagRegex(language, "^[ \t]*interface[ \t]+([" ALPHA "_][" ALNUM "_]*)",
-		"\\1", "i,interface,interfaces", NULL);
-	addTagRegex(language, "^[ \t]*define[ \t]*\\([ \t]*['\"]?([" ALPHA "_][" ALNUM "_]*)",
-		"\\1", "m,macro,macros", NULL);
-	addTagRegex(language, "^[ \t]*const[ \t]*([" ALPHA "_][" ALNUM "_]*)[ \t]*[=;]",
-		"\\1", "m,macro,macros", NULL);
-	/* Note: Using [] to match words is wrong, but using () doesn't seem to match 'function' on its own */
-	addCallbackRegex(language,
-		"^[ \t]*[(public|protected|private|static|final)[ \t]*]*[ \t]*function[ \t]+&?[ \t]*([" ALPHA "_][" ALNUM "_]*)[[:space:]]*(\\(.*\\))",
-		NULL, function_cb);
-	addTagRegex(language, "^[ \t]*(\\$|::\\$|\\$this->)([" ALPHA "_][" ALNUM "_]*)[ \t]*=",
-		"\\2", "v,variable,variables", NULL);
-	addTagRegex(language, "^[ \t]*((var|public|protected|private|static)[ \t]+)+\\$([" ALPHA "_][" ALNUM "_]*)[ \t]*[=;]",
-		"\\3", "v,variable,variables", NULL);
-
-	/* My function regex class */
-	/* addCallbackRegex(language, "^[ \t]*((final|abstract)[ \t]+)class[ \t]+([" ALPHA "_][" ALNUM "_]*)",*/
-	addCallbackRegex(language, "[ \t]+class[ \t]+([" ALPHA "_][" ALNUM "_]*)",
-		NULL, parsePhpClass);
-
-	/* function regex is covered by PHP regex */
-	addTagRegex (language, "(^|[ \t])([A-Za-z0-9_]+)[ \t]*[=:][ \t]*function[ \t]*\\(",
-		"\\2", "j,jsfunction,javascript functions", NULL);
-	addTagRegex (language, "(^|[ \t])([A-Za-z0-9_.]+)\\.([A-Za-z0-9_]+)[ \t]*=[ \t]*function[ \t]*\\(",
-		"\\2.\\3", "j,jsfunction,javascript functions", NULL);
-	addTagRegex (language, "(^|[ \t])([A-Za-z0-9_.]+)\\.([A-Za-z0-9_]+)[ \t]*=[ \t]*function[ \t]*\\(",
-		"\\3", "j,jsfunction,javascript functions", NULL);
-}
-
 void printTagEntry(const tagEntryInfo *tag)
 {
 	fprintf(stderr, "Tag: %s (%s) [ impl: %s, scope: %s, type: %s\n", tag->name,
 	tag->kindName, tag->extensionFields.implementation, tag->extensionFields.scope[1],
 	tag->extensionFields.varType);
-}
-
-static void parsePhpClass(const char *line, const regexMatch *matches, unsigned int count)
-{
-	char * ln, *className;
-	
-	className = xMalloc(matches[count - 1].length + 1, char);
-	strncpy(className, line + matches[count - 1].start, matches[count - 1].length);
-	*(className+matches[count - 1].length) = '\x0';
-	printf("Name: %s\n", className);
-	
-	
-	skipToMatch("{}");
-	
-	
-	eFree(className);
-}
-
-static void function_cb(const char *line, const regexMatch *matches, unsigned int count)
-{
-	char *name, *arglist;
-	char kind = 'f';
-	static const char *kindName = "function";
-	tagEntryInfo e;
-	const regexMatch *match_funcname = NULL;
-	const regexMatch *match_arglist = NULL;
-
-	if (count > 2)
-	{
-		match_funcname = &matches[count - 2];
-		match_arglist = &matches[count - 1];
-	}
-
-	if (match_funcname != NULL)
-	{
-		name = xMalloc(match_funcname->length + 1, char);
-		strncpy(name, line + match_funcname->start, match_funcname->length);
-		*(name+match_funcname->length) = '\x0';
-		arglist = xMalloc(match_arglist->length + 1, char);
-		strncpy(arglist, line + match_arglist->start, match_arglist->length);
-		*(arglist+match_arglist->length) = '\x0';
-
-		initTagEntry (&e, name);
-		e.kind = kind;
-		e.kindName = kindName;
-		e.extensionFields.arglist = arglist;
-		makeTagEntry (&e);
-		// printTagEntry(&e);
-
-		eFree(name);
-		eFree(arglist);
-	}
 }
 
 static void handlePhpLine(vString *line, sStatement **statement)
@@ -240,6 +150,7 @@ static void handlePhpLine(vString *line, sStatement **statement)
 		initTagEntry(&tag, st->scopeName);
 		tag.kind = 'c';
 		tag.kindName = "class";
+		tag.type = tm_tag_name_type("class"); 
 		makeTagEntry (&tag);
 		
 		// DEBUG
@@ -262,6 +173,7 @@ static void handlePhpLine(vString *line, sStatement **statement)
 	
 	
 	char *keywords[] = {"public", "private", "protected", "abstact", "static", "final"};
+	char *access[] = {"public", "private", "protected"};
 	
 	for (i = 0; i < 6; i++)
 	{
@@ -309,6 +221,20 @@ static void handlePhpLine(vString *line, sStatement **statement)
 			name = xMalloc(i+1, char);
 			strncpy(name, cp - i, i);
 			name[i] = '\0';
+			
+			initTagEntry(&tag, st->scopeName);
+			tag.kind = 'm';
+			tag.kindName = "method";
+			tag.name = name;
+			tag.extensionFields.access = access[am];
+			tag.extensionFields.scope [0] = "class";
+			tag.extensionFields.scope [1] = st->scopeName;
+			tag.type = tm_tag_name_type("method"); 
+			makeTagEntry (&tag);
+			
+			
+			//printTagEntry(&tag);
+			//printf("%d %s::%s()\n", tag.type, st->scopeName, name);
 		}
 	}
 	
@@ -338,6 +264,7 @@ static void findPHPTags (void)
     {
 		vStringPut(line, c);
 		
+		// BUG: class { - nested will wrong
 		if (c == '{')
 		{
 			st->nested++;
@@ -385,69 +312,6 @@ extern parserDefinition* PhpParser (void)
     def->parser     = findPHPTags;
     
     return def;
-}
-
-/*  Skips to the next brace in column 1. This is intended for cases where
- *  preprocessor constructs result in unbalanced braces.
- */
-static void skipToFormattedBraceMatch (void)
-{
-	int c, next;
-
-	c = cppGetc ();
-	next = cppGetc ();
-	while (c != EOF  &&  (c != '\n'  ||  next != '}'))
-	{
-		c = next;
-		next = cppGetc ();
-	}
-}
-
-/*  Skip to the matching character indicated by the pair string. If skipping
- *  to a matching brace and any brace is found within a different level of a
- *  #if conditional statement while brace formatting is in effect, we skip to
- *  the brace matched by its formatting. It is assumed that we have already
- *  read the character which starts the group (i.e. the first character of
- *  "pair").
- */
-static void skipToMatch (const char *const pair)
-{
-	const boolean braceMatching = (boolean) (strcmp ("{}", pair) == 0);
-	const boolean braceFormatting = (boolean) (isBraceFormat () && braceMatching);
-	const unsigned int initialLevel = getDirectiveNestLevel ();
-	const int begin = pair [0], end = pair [1];
-	const unsigned long inputLineNumber = getInputLineNumber ();
-	int matchLevel = 1;
-	int c = '\0';
-	while (matchLevel > 0  &&  (c = cppGetc ()) != EOF)
-	{
-		fputc(c, stdout);
-		if (c == begin)
-		{
-			++matchLevel;
-			if (braceFormatting  &&  getDirectiveNestLevel () != initialLevel)
-			{
-				skipToFormattedBraceMatch ();
-				break;
-			}
-		}
-		else if (c == end)
-		{
-			--matchLevel;
-			if (braceFormatting  &&  getDirectiveNestLevel () != initialLevel)
-			{
-				skipToFormattedBraceMatch ();
-				break;
-			}
-		}
-	}
-	fputc('\n', stdout);
-	
-	printf("---- Line number: %d\n", inputLineNumber);
-	if (c == EOF)
-	{
-		printf("\test\n");
-	}
 }
 
 /* vi:set tabstop=4 shiftwidth=4: */
