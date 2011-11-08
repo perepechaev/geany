@@ -233,6 +233,7 @@ static void handlePhpLine(vString *line, sStatement **statement)
 				tag.extensionFields.access = access[am];
 				tag.extensionFields.scope [0] = "class";
 				tag.extensionFields.scope [1] = st->scopeName;
+				tag.extensionFields.varType = st->scopeName;
 			}
 			else
 			{
