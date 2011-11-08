@@ -559,6 +559,38 @@ void tm_workspace_dump(void)
 	}
 }
 
+const GPtrArray *tm_workspace_find_all(int type)
+{
+	static GPtrArray *tags = NULL;
+	TMTag **matches;
+	int count, i;
+	
+	printf("TYPE: %d\n", type);
+	
+	if ( !theWorkspace )
+		return NULL;
+		
+	if (tags)
+		g_ptr_array_set_size(tags, 0);
+	else
+		tags = g_ptr_array_new();
+		
+	count = 0;
+	matches = tm_tags_find(theWorkspace->work_object.tags_array, "", TRUE, &count);
+	//tm_tags_array_print(theWorkspace->work_object.tags_array, stdout);
+	
+	for (i = 0; i < count; i++)
+	{
+		if (type & (*matches)->type)
+		{
+			g_ptr_array_add(tags, (*matches) );
+		}
+		matches++;
+	}
+	
+	return tags;	
+}
+
 const GPtrArray *tm_workspace_find(const char *name, int type, TMTagAttrType *attrs
  , gboolean partial, langType lang)
 {
@@ -570,8 +602,6 @@ const GPtrArray *tm_workspace_find(const char *name, int type, TMTagAttrType *at
 	if ((!theWorkspace) || (!name))
 		return NULL;
 	len = strlen(name);
-	if (!len)
-		return NULL;
 	if (tags)
 		g_ptr_array_set_size(tags, 0);
 	else

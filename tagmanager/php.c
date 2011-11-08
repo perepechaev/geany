@@ -94,9 +94,9 @@ typedef struct sStatement
 
 void printTagEntry(const tagEntryInfo *tag)
 {
-	fprintf(stderr, "Tag: %s (%s) [ impl: %s, scope: %s, type: %s\n", tag->name,
+	fprintf(stderr, "Tag: %s (%s) [ impl: %s, scope: %s, type: %s, access: %s\n", tag->name,
 	tag->kindName, tag->extensionFields.implementation, tag->extensionFields.scope[1],
-	tag->extensionFields.varType);
+	tag->extensionFields.varType, tag->extensionFields.access);
 }
 
 static void handlePhpLine(vString *line, sStatement **statement)
@@ -245,8 +245,8 @@ static void handlePhpLine(vString *line, sStatement **statement)
 			tag.name = name;
 			makeTagEntry (&tag);
 			
-			//printTagEntry(&tag);
-			//printf("%d %s::%s()\n", tag.type, st->scopeName, name);
+			// printTagEntry(&tag);
+			// printf("%d %s::%s()\n", tag.type, st->scopeName, name);
 		}
 	}
 	

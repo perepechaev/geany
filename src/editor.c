@@ -688,7 +688,6 @@ static void request_reshowing_calltip(SCNotification *nt)
 	}
 }
 
-
 static void autocomplete_scope(GeanyEditor *editor)
 {
 	ScintillaObject *sci = editor->sci;
@@ -699,7 +698,17 @@ static void autocomplete_scope(GeanyEditor *editor)
 	const TMTag *tag;
 	GeanyFiletype *ft = editor->document->file_type;
 
-	if (ft->id == GEANY_FILETYPES_C || ft->id == GEANY_FILETYPES_CPP)
+	if (ft->id == GEANY_FILETYPES_PHP && match_last_chars(sci, pos, "new "))
+	{
+		tags = tm_workspace_find_all( tm_tag_class_t );
+		if (tags)
+			show_tags_list(editor, tags, 0);
+		
+		return;
+	}
+	
+	if (ft->id == GEANY_FILETYPES_C || ft->id == GEANY_FILETYPES_CPP || 
+		ft->id == GEANY_FILETYPES_PHP)
 	{
 		if (match_last_chars(sci, pos, "->") || match_last_chars(sci, pos, "::"))
 			pos--;
@@ -1827,7 +1836,7 @@ static gchar *find_calltip(const gchar *word, GeanyFiletype *ft)
 	guint i;
 
 	g_return_val_if_fail(ft && word && *word, NULL);
-
+	
 	/* use all types in case language uses wrong tag type e.g. python "members" instead of "methods" */
 	tags = tm_workspace_find(word, tm_tag_max_t, attrs, FALSE, ft->lang);
 	if (tags->len == 0)
@@ -2175,7 +2184,7 @@ gboolean editor_start_auto_complete(GeanyEditor *editor, gint pos, gboolean forc
 	if (ft->id == GEANY_FILETYPES_LATEX)
 		wordchars = GEANY_WORDCHARS"\\"; /* add \ to word chars if we are in a LaTeX file */
 	else if (ft->id == GEANY_FILETYPES_HTML || ft->id == GEANY_FILETYPES_PHP)
-		wordchars = GEANY_WORDCHARS"&"; /* add & to word chars if we are in a PHP or HTML file */
+		wordchars = GEANY_WORDCHARS"&$"; /* add & to word chars if we are in a PHP or HTML file */
 	else
 		wordchars = GEANY_WORDCHARS;
 
@@ -2215,6 +2224,7 @@ gboolean editor_start_auto_complete(GeanyEditor *editor, gint pos, gboolean forc
 					ret = autocomplete_tags(editor, root, rootlen);
 
 				/* If forcing and there's nothing else to show, complete from words in document */
+				
 				if (!ret && (force || editor_prefs.autocomplete_doc_words))
 					ret = autocomplete_doc_word(editor, root, rootlen);
 			}
