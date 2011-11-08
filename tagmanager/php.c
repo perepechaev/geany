@@ -151,6 +151,7 @@ static void handlePhpLine(vString *line, sStatement **statement)
 		tag.kind = 'c';
 		tag.kindName = "class";
 		tag.type = tm_tag_name_type("class"); 
+		tag.extensionFields.varType = st->scopeName;
 		makeTagEntry (&tag);
 		
 		// DEBUG
@@ -173,7 +174,7 @@ static void handlePhpLine(vString *line, sStatement **statement)
 	
 	
 	char *keywords[] = {"public", "private", "protected", "abstact", "static", "final"};
-	char *access[] = {"public", "private", "protected"};
+	char *access[] = {NULL, "public", "private", "protected"};
 	
 	for (i = 0; i < 6; i++)
 	{
@@ -222,16 +223,27 @@ static void handlePhpLine(vString *line, sStatement **statement)
 			strncpy(name, cp - i, i);
 			name[i] = '\0';
 			
-			initTagEntry(&tag, st->scopeName);
-			tag.kind = 'm';
-			tag.kindName = "method";
-			tag.name = name;
-			tag.extensionFields.access = access[am];
-			tag.extensionFields.scope [0] = "class";
-			tag.extensionFields.scope [1] = st->scopeName;
-			tag.type = tm_tag_name_type("method"); 
-			makeTagEntry (&tag);
+			if (st->scopeName)
+			{
+				initTagEntry(&tag, st->scopeName);
+				tag.kind = 'm';
+				tag.kindName = "method";
+				tag.type = tm_tag_name_type("method"); 
+				
+				tag.extensionFields.access = access[am];
+				tag.extensionFields.scope [0] = "class";
+				tag.extensionFields.scope [1] = st->scopeName;
+			}
+			else
+			{
+				initTagEntry(&tag, name);
+				tag.kind = 'f';
+				tag.kindName = "function";
+				tag.type = tm_tag_name_type("function"); 
+			}
 			
+			tag.name = name;
+			makeTagEntry (&tag);
 			
 			//printTagEntry(&tag);
 			//printf("%d %s::%s()\n", tag.type, st->scopeName, name);
